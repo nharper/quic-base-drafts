@@ -401,7 +401,8 @@ Version:
 Packet Number:
 
 : Octets 13 to 16 contain the packet number.  {{packet-numbers}} describes the
-  use of packet numbers.
+  use of packet numbers.  Packet numbers are protected separate to the packet
+  payload.
 
 Payload:
 
@@ -482,7 +483,8 @@ Connection ID:
 Packet Number:
 
 : The length of the packet number field depends on the packet type.  This field
-  can be 1, 2 or 4 octets long depending on the short packet type.
+  can be 1, 2 or 4 octets long depending on the short packet type.  Packet
+  numbers are protected separate to the packet payload.
 
 Protected Payload:
 
@@ -582,9 +584,9 @@ unless it has received a packet from the server.  If the client has received a
 packet from the server, the connection ID field uses the value provided by the
 server.
 
-The first Initial packet that is sent by a client contains a randomized packet
-number.  All subsequent packets contain a packet number that is incremented by
-one, see ({{packet-numbers}}).
+The first Initial packet that is sent by a client contains a packet number of 0.
+All subsequent packets contain a packet number that is incremented by one, see
+({{packet-numbers}}).
 
 The payload of a Initial packet consists of a STREAM frame (or frames)
 for stream 0 containing a cryptographic handshake message, with enough PADDING
@@ -609,8 +611,11 @@ that wishes to perform a stateless retry (see {{stateless-retry}}).
 The server includes a connection ID of its choice in the connection ID field.
 The client MUST use this connection ID for any subsequent packets that it sends.
 
-The packet number field echoes the packet number field from the triggering
-client packet.
+The Packet Number field of a Retry packet MUST be set to 0.  This value is
+subsequently protected as normal. \[\[Editor's Note: This isn't ideal, because
+it creates a "cheat" where the client assumes a value.  That's a problem, so I'm
+tempted to suggest that this include any value less than 2^30 so that normal
+processing works - and can be properly exercised.]]
 
 A Retry packet is never explicitly acknowledged in an ACK frame
 by a client.  Receiving another Initial packet implicitly acknowledges a Retry
@@ -644,11 +649,8 @@ server and client.
 The connection ID field in a Handshake packet contains a connection ID
 that is chosen by the server (see {{connection-id}}).
 
-The first Handshake packet sent by a server contains a randomized packet number.
-This value is increased for each subsequent packet sent by the server as
-described in {{packet-numbers}}.  The client increments the packet number from
-its previous packet by one for each Handshake packet that it sends (which might
-be an Initial, 0-RTT Protected, or Handshake packet).
+The first Handshake packet sent by a server contains a packet number of 0.
+Packet numbers are incremented normally for other Handshake packets.
 
 The payload of this packet contains STREAM frames and could contain PADDING and
 ACK frames.
@@ -656,10 +658,11 @@ ACK frames.
 
 ## Protected Packets {#packet-protected}
 
-Packets that are protected with 0-RTT keys are sent with long headers; all
-packets protected with 1-RTT keys are sent with short headers.  The different
-packet types explicitly indicate the encryption level and therefore the keys
-that are used to remove packet protection.
+All QUIC packets are protected.  Packets that are protected with the static
+handshake keys or the 0-RTT keys are sent with long headers; all packets
+protected with 1-RTT keys are sent with short headers.  The different packet
+types explicitly indicate the encryption level and therefore the keys that are
+used to remove packet protection.
 
 Packets protected with 0-RTT keys use a type value of 0x7C.  The connection ID
 field for a 0-RTT packet is selected by the client.
@@ -672,8 +675,10 @@ continue to use the connection ID selected by the client for 0-RTT packets, see
 
 The version field for protected packets is the current QUIC version.
 
-The packet number field contains a packet number, which increases with each
-packet sent, see {{packet-numbers}} for details.
+The packet number field contains a packet number, which is protected separately
+from the rest of the packet (see {{QUIC-TLS}} for details).  The underlying
+packet number increases with each packet sent, see {{packet-numbers}} for
+details.
 
 The payload is protected using authenticated encryption.  {{QUIC-TLS}} describes
 packet protection in detail.  After decryption, the plaintext consists of a
@@ -709,8 +714,8 @@ packets MUST use connection ID selected by the client.
 The packet number is an integer in the range 0 to 2^62-1. The value is used in
 determining the cryptographic nonce for packet encryption.  Each endpoint
 maintains a separate packet number for sending and receiving.  The packet number
-for sending MUST increase by at least one after sending any packet, unless
-otherwise specified (see {{initial-packet-number}}).
+for sending MUST starts at zero for the first packet set and MUST increase by at
+least one after sending a packet.
 
 A QUIC endpoint MUST NOT reuse a packet number within the same connection (that
 is, under the same cryptographic keys).  If the packet number for sending
@@ -720,15 +725,17 @@ Reset ({{stateless-reset}}) in response to further packets that it receives.
 
 For the packet header, the number of bits required to represent the packet
 number are reduced by including only the least significant bits of the packet
-number.  The actual packet number for each packet is reconstructed at the
-receiver based on the largest packet number received on a successfully
-authenticated packet.
+number.  The encoded packet number is protected as described in {{QUIC-TLS}}.
+Protection of the packet number is removed prior to recovering the full packet
+number.  The full packet number is reconstructed at the receiver based on the
+largest packet number received on a successfully authenticated packet.
 
-A packet number is decoded by finding the packet number value that is closest to
-the next expected packet.  The next expected packet is the highest received
-packet number plus one.  For example, if the highest successfully authenticated
-packet had a packet number of 0xaa82f30e, then a packet containing a 16-bit
-value of 0x1f94 will be decoded as 0xaa831f94.
+Once packet number protection is removed, the packet number is decoded by
+finding the packet number value that is closest to the next expected packet.
+The next expected packet is the highest received packet number plus one.  For
+example, if the highest successfully authenticated packet had a packet number of
+0xaa82f30e, then a packet containing a 16-bit value of 0x1f94 will be decoded as
+0xaa831f94.
 
 The sender MUST use a packet number size able to represent more than twice as
 large a range than the difference between the largest acknowledged packet and
@@ -747,28 +754,9 @@ sending a packet with a number of 0x6b4264 requires a 16-bit or larger packet
 number encoding; whereas a 32-bit packet number is needed to send a packet with
 a number of 0x6bc107.
 
-Version Negotiation ({{packet-version}}) and Retry ({{packet-retry}}) packets
-have special rules for populating the packet number field.
-
-
-### Initial Packet Number {#initial-packet-number}
-
-The initial value for packet number MUST be selected randomly from a range
-between 0 and 2^32 - 1025 (inclusive).  This value is selected so that Initial
-and Handshake packets exercise as many possible values for the Packet Number
-field as possible.
-
-Limiting the range allows both for loss of packets and for any stateless
-exchanges.  Packet numbers are incremented for subsequent packets, but packet
-loss and stateless handling can both mean that the first packet sent by an
-endpoint isn't necessarily the first packet received by its peer.  The first
-packet received by a peer cannot be 2^32 or greater or the recipient will
-incorrectly assume a packet number that is 2^32 values lower and discard the
-packet.
-
-Use of a secure random number generator {{?RFC4086}} is not necessary for
-generating the initial packet number, nor is it necessary that the value be
-uniformly distributed.
+A Version Negotiation packet ({{packet-version}}) does not include a packet
+number.  The Retry packet ({{packet-retry}}) has special rules for populating
+the packet number field.
 
 
 ## Handling Packets from Different Versions {#version-specific}
@@ -1502,40 +1490,8 @@ Each NEW_CONNECTION_ID is marked with a sequence number.  Connection IDs MUST be
 used in the order in which they are numbered.
 
 A client which wishes to break linkability upon changing networks MUST use the
-connection ID provided by the server as well as incrementing the packet sequence
-number by an externally unpredictable value computed as described in
-{{packet-number-gap}}. Packet number gaps are cumulative.  A client might skip
-connection IDs, but it MUST ensure that it applies the associated packet number
-gaps for connection IDs that it skips in addition to the packet number gap
-associated with the connection ID that it does use.
-
-A server that receives a packet that is marked with a new connection ID recovers
-the packet number by adding the cumulative packet number gap to its expected
-packet number.  A server SHOULD discard packets that contain a smaller gap than
-it advertised.
-
-For instance, a server might provide a packet number gap of 7 associated with a
-new connection ID.  If the server received packet 10 using the previous
-connection ID, it should expect packets on the new connection ID to start at 18.
-A packet with the new connection ID and a packet number of 17 is discarded as
-being in error.
-
-
-#### Packet Number Gap
-
-In order to avoid linkage, the packet number gap MUST be externally
-indistinguishable from random. The packet number gap for a connection
-ID with sequence number is computed by encoding the sequence number
-as a 32-bit integer in big-endian format, and then computing:
-
-~~~
-Gap = HKDF-Expand-Label(packet_number_secret,
-                        "QUIC packet sequence gap", sequence, 4)
-~~~
-
-The output of HKDF-Expand-Label is interpreted as a big-endian
-number. "packet_number_secret" is derived from the TLS key exchange,
-as described in Section 5.6 of {{QUIC-TLS}}.
+connection ID provided by the server.  Protection of packet numbers ensures that
+packet numbers cannot be used to correlate connections.
 
 
 ### Address Validation for Migrated Connections {#migrate-validate}
@@ -2375,8 +2331,11 @@ Unlike TCP SACKs, QUIC acknowledgements are irrevocable.  Once a packet has
 been acknowledged, even if it does not appear in a future ACK frame,
 it remains acknowledged.
 
-A client MUST NOT acknowledge Version Negotiation or Retry packets.  These
-packet types contain packet numbers selected by the client, not the server.
+A client MUST NOT acknowledge Version Negotiation or Retry packets.  Version
+Negotiation packets don't contain a packet number and Retry packets include the
+packet number from the Initial packet it responds to.  Rather than relying on
+ACK frames, these packets are implicitly acknowledged by the next Initial packet
+sent by the client.
 
 A sender MAY intentionally skip packet numbers to introduce entropy into the
 connection, to avoid opportunistic acknowledgement attacks.  The sender SHOULD
