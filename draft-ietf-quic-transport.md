@@ -401,8 +401,8 @@ Version:
 Packet Number:
 
 : Octets 13 to 16 contain the packet number.  {{packet-numbers}} describes the
-  use of packet numbers.  Packet numbers are protected separate to the packet
-  payload.
+  use of packet numbers.  Packet numbers are protected separately from the
+  packet payload.
 
 Payload:
 
@@ -585,8 +585,8 @@ packet from the server, the connection ID field uses the value provided by the
 server.
 
 The first Initial packet that is sent by a client contains a packet number of 0.
-All subsequent packets contain a packet number that is incremented by one, see
-({{packet-numbers}}).
+All subsequent packets contain a packet number that is incremented by at least
+one, see ({{packet-numbers}}).
 
 The payload of a Initial packet consists of a STREAM frame (or frames)
 for stream 0 containing a cryptographic handshake message, with enough PADDING
@@ -714,7 +714,7 @@ packets MUST use connection ID selected by the client.
 The packet number is an integer in the range 0 to 2^62-1. The value is used in
 determining the cryptographic nonce for packet encryption.  Each endpoint
 maintains a separate packet number for sending and receiving.  The packet number
-for sending MUST starts at zero for the first packet set and MUST increase by at
+for sending MUST start at zero for the first packet sent and MUST increase by at
 least one after sending a packet.
 
 A QUIC endpoint MUST NOT reuse a packet number within the same connection (that
